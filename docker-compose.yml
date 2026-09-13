@@ -1,0 +1,24 @@
+﻿version: '3.8'
+
+services:
+  qshield-dashboard:
+    build: .
+    container_name: qshield_security_center
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./vault_storage:/app/vault_storage
+      - ./vault_keys:/app/vault_keys
+
+  qshield-server:
+    build: .
+    container_name: qshield_tcp_server
+    command: ["python", "-m", "src.qshield.cli", "listen", "--host", "0.0.0.0", "--port", "9123"]
+    ports:
+      - "9123:9123"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

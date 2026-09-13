@@ -6,6 +6,8 @@
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 [![NIST PQC Standard](https://img.shields.io/badge/NIST%20Standard-FIPS%20203%20%7C%20204-success.svg)](https://csrc.nist.gov/projects/post-quantum-cryptography)
 [![Symmetric Cipher](https://img.shields.io/badge/Cipher-AES--256--GCM-orange.svg)](https://csrc.nist.gov/publications/detail/sp/800-38d/final)
+[![Docker Ready](https://img.shields.io/badge/Docker-compose%20ready-blue.svg)](Dockerfile)
+[![NIST KAT](https://img.shields.io/badge/KAT%20Tests-Deterministic%20Passed-success.svg)](tests/test_kat.py)
 [![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-brightgreen.svg)](https://github.com/meryemgcl/Q-Shield-Quantum-Safe-Vault/actions)
 [![Android SDK](https://img.shields.io/badge/Mobile-Android%20Kotlin%20%26%20JNI%20C%2B%2B-green.svg)](mobile/android/)
 [![Project](https://img.shields.io/badge/Ar--Ge%20Proje%20Pazar%C4%B1-Kastamonu%20%C3%9Cniversitesi-red.svg)](https://www.kastamonu.edu.tr/)
@@ -203,3 +205,4 @@ OK
 ## 📄 License
 
 Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for complete details.
+
