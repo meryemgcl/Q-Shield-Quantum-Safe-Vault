@@ -1,9 +1,8 @@
 """
-Q-Shield FAZ 4: Post-Quantum Siber Güvenlik Kontrol Paneli (Interactive Dashboard)
-Kastamonu Üniversitesi 1. Ar-Ge Proje Pazarı
+Q-Shield PHASE 4: Post-Quantum Security Dashboard (Interactive Dashboard)
 
-Çalıştırma:
-    streamlit run faz4_dashboard.py
+Run:
+    streamlit run src/qshield/dashboard.py
 """
 
 import streamlit as st
@@ -59,9 +58,7 @@ st.markdown("""
 
 # Kenar Çubuğu
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Kastamonu_%C3%9Cniversitesi_logosu.svg/300px-Kastamonu_%C3%9Cniversitesi_logosu.svg.png", width=120)
-    st.markdown("### **Q-Shield PQC**")
-    st.markdown("**1. Ar-Ge Proje Pazarı**")
+    st.markdown("### 🛡️ Q-Shield Dashboard")
     st.markdown("---")
     st.markdown("**Standartlar:**")
     st.markdown("- NIST FIPS 203: ML-KEM (Kyber)")
@@ -73,8 +70,8 @@ with st.sidebar:
     st.markdown("---")
     st.info("Kuantum Bilgisayarlar (Shor Algoritması) RSA ve ECC'yi kırmadan önce verilerinizi koruyun.")
 
-st.markdown('<div class="main-title">🛡️ Q-Shield: Kuantum Sonrası Kriptografi (PQC) Protokolü</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-title">Kastamonu Üniversitesi Ar-Ge Proje Pazarı | Hibrit Veri Güvenliği ve Kuantum Kasası Prototipi</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🛡️ Q-Shield PQC</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">Hybrid Data Security & Quantum Vault Prototype</div>', unsafe_allow_html=True)
 
 tabs = st.tabs([
     "📊 Faz 1: Kriptografik Karşılaştırma",
@@ -315,6 +312,6 @@ client.unlock_from_vault(vault_path)
         {"Kalem": "Geliştirme ve Test Cihazları/Ortamları", "Tutar (TL)": 15000, "Açıklama": "Mobil test cihazları ve geliştirme iş istasyonu"},
         {"Kalem": "Sızma Testleri ve Kriptografik Denetim Araçları", "Tutar (TL)": 20000, "Açıklama": "Yan kanal ve güvenlik denetimi yazılımları"},
         {"Kalem": "Protokol Bulut Sunucu Röle Giderleri", "Tutar (TL)": 10000, "Açıklama": "P2P sinyalleşme ve relay sunucu altyapısı"},
-        {"Kalem": "TOPLAM", "Tutar (TL)": 45000, "Açıklama": "1. Ar-Ge Proje Pazarı kapsamında talep edilen bütçe"}
+        {"Item": "TOTAL", "Amount (TL)": 45000, "Description": "Estimated Development & Validation Budget"}
     ])
     st.table(budget_df)

@@ -10,7 +10,6 @@
 [![NIST KAT](https://img.shields.io/badge/KAT%20Tests-Deterministic%20Passed-success.svg)](tests/test_kat.py)
 [![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-brightgreen.svg)](https://github.com/meryemgcl/Q-Shield-Quantum-Safe-Vault/actions)
 [![Android SDK](https://img.shields.io/badge/Mobile-Android%20Kotlin%20%26%20JNI%20C%2B%2B-green.svg)](mobile/android/)
-[![Project](https://img.shields.io/badge/Ar--Ge%20Proje%20Pazar%C4%B1-Kastamonu%20%C3%9Cniversitesi-red.svg)](https://www.kastamonu.edu.tr/)
 
 **An Enterprise-Grade, NIST-Compliant Post-Quantum Cryptography Hybrid Protocol, Streaming Quantum Vault, and Peer-to-Peer TCP Messaging Suite.**
 
@@ -108,8 +107,6 @@ Q-Shield-Quantum-Safe-Vault/
 │       ├── build.gradle.kts
 │       └── src/main/cpp/native-lib.cpp
 ├── docs/
-│   ├── basvuru_formu.md        # Kastamonu Üniversitesi Ar-Ge Proje Pazarı Başvuru Formu
-│   ├── proje_fazlari.md        # Resmi Geliştirme Fazları ve Yol Haritası
 │   └── architecture_spec.md    # In-depth Cryptographic Specification
 ├── tests/
 │   ├── test_kyber.py           # Unit tests for ML-KEM encapsulation & decapsulation
