@@ -1,0 +1,48 @@
+﻿[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qshield-pqc"
+version = "1.0.0"
+description = "Q-Shield: Post-Quantum Cryptography (PQC) Hybrid Security Protocol & Quantum Vault"
+readme = "README.md"
+authors = [
+  { name = "Meryem Güçlü", email = "lifevern@gmail.com" }
+]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Security :: Cryptography",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+keywords = [
+    "post-quantum-cryptography",
+    "pqc",
+    "crystals-kyber",
+    "crystals-dilithium",
+    "aes-256-gcm",
+    "hybrid-encryption",
+    "lattice-cryptography"
+]
+dependencies = [
+    "cryptography>=43.0.0",
+    "streamlit>=1.35.0",
+    "pandas>=2.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "black>=24.0.0",
+    "flake8>=7.0.0"
+]
+
+[project.scripts]
+qshield = "qshield.cli:main"
