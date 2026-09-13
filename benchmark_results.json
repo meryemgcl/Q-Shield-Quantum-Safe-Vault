@@ -1,0 +1,80 @@
+{
+  "timestamp": "2026-09-13 20:57:07",
+  "kem_benchmarks": [
+    {
+      "name": "RSA-2048 (Klasik)",
+      "quantum_safe": false,
+      "shor_vulnerable": true,
+      "keygen_ms": 67.77,
+      "enc_ms": 2.12,
+      "dec_ms": 1.15,
+      "total_exchange_ms": 3.28,
+      "pk_size_bytes": 294,
+      "sk_size_bytes": 1217,
+      "ct_size_bytes": 256,
+      "security_bits": 112,
+      "math_basis": "Tam Sayı Çarpanlara Ayırma (IFP)"
+    },
+    {
+      "name": "RSA-4096 (Klasik Yüksek)",
+      "quantum_safe": false,
+      "shor_vulnerable": true,
+      "keygen_ms": 668.8,
+      "enc_ms": 0.21,
+      "dec_ms": 6.21,
+      "total_exchange_ms": 6.41,
+      "pk_size_bytes": 550,
+      "sk_size_bytes": 2374,
+      "ct_size_bytes": 512,
+      "security_bits": 128,
+      "math_basis": "Tam Sayı Çarpanlara Ayırma (IFP)"
+    },
+    {
+      "name": "ECDH (NIST P-256)",
+      "quantum_safe": false,
+      "shor_vulnerable": true,
+      "keygen_ms": 1.89,
+      "enc_ms": 0.61,
+      "dec_ms": 0.07,
+      "total_exchange_ms": 0.68,
+      "pk_size_bytes": 91,
+      "sk_size_bytes": 138,
+      "ct_size_bytes": 91,
+      "security_bits": 128,
+      "math_basis": "Eliptik Eğri Ayrık Logaritması (ECDLP)"
+    },
+    {
+      "name": "CRYSTALS-Kyber-768 (Q-Shield PQC)",
+      "quantum_safe": true,
+      "shor_vulnerable": false,
+      "keygen_ms": 52.99,
+      "enc_ms": 93.62,
+      "dec_ms": 12.96,
+      "total_exchange_ms": 106.58,
+      "pk_size_bytes": 1184,
+      "sk_size_bytes": 2400,
+      "ct_size_bytes": 1088,
+      "security_bits": 192,
+      "math_basis": "Kafes Tabanlı Modül-LWE (Module Learning with Errors)"
+    }
+  ],
+  "signature_benchmark": {
+    "name": "CRYSTALS-Dilithium-3 (Q-Shield Dijital İmza)",
+    "quantum_safe": true,
+    "shor_vulnerable": false,
+    "keygen_ms": 0.03,
+    "sign_ms": 0.03,
+    "verify_ms": 0.03,
+    "pk_size_bytes": 1952,
+    "sk_size_bytes": 4000,
+    "sig_size_bytes": 3293,
+    "security_bits": 192,
+    "math_basis": "Kafes Tabanlı Modül-SIS (Short Integer Solution)"
+  },
+  "summary": {
+    "pqc_kem": "CRYSTALS-Kyber-768",
+    "pqc_signature": "CRYSTALS-Dilithium-3",
+    "symmetric_cipher": "AES-256-GCM",
+    "status": "PASSED"
+  }
+}
