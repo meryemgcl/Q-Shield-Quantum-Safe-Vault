@@ -6,11 +6,13 @@
 [![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
 [![NIST PQC Standard](https://img.shields.io/badge/NIST%20Standard-FIPS%20203%20%7C%20204-success.svg)](https://csrc.nist.gov/projects/post-quantum-cryptography)
 [![Symmetric Cipher](https://img.shields.io/badge/Cipher-AES--256--GCM-orange.svg)](https://csrc.nist.gov/publications/detail/sp/800-38d/final)
+[![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-brightgreen.svg)](https://github.com/meryemgcl/Q-Shield-Quantum-Safe-Vault/actions)
+[![Android SDK](https://img.shields.io/badge/Mobile-Android%20Kotlin%20%26%20JNI%20C%2B%2B-green.svg)](mobile/android/)
 [![Project](https://img.shields.io/badge/Ar--Ge%20Proje%20Pazar%C4%B1-Kastamonu%20%C3%9Cniversitesi-red.svg)](https://www.kastamonu.edu.tr/)
 
-**A Military-Grade, NIST-Compliant Post-Quantum Cryptography Hybrid Protocol, Local Quantum Vault, and Peer-to-Peer Messaging Suite.**
+**An Enterprise-Grade, NIST-Compliant Post-Quantum Cryptography Hybrid Protocol, Streaming Quantum Vault, and Peer-to-Peer TCP Messaging Suite.**
 
-[Architecture](#-architecture) • [Features](#-key-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Benchmarks](#-cryptographic-benchmarks) • [Documentation](#-project-phases--roadmap)
+[Architecture](#-architecture) • [Security Hardening](#-security-hardening--features) • [Installation](#-installation) • [CLI Usage](#-command-line-interface-cli) • [Benchmarks](#-cryptographic-benchmarks) • [Android SDK](#-mobile-android-sdk-integration)
 
 </div>
 
@@ -29,6 +31,23 @@ Hostile state actors and cyber syndicates are actively eavesdropping and stockpi
 
 ---
 
+## 🔒 Security Hardening & Enterprise Features
+
+1. **Constant-Time Cryptographic Primitives:**
+   - Negacyclic polynomial multiplication and sampling are engineered without early data-dependent branches, mitigating timing-based side-channel attacks.
+2. **RAM Zeroization:**
+   - Secret seeds and temporary key material are wiped in memory with `0x00` (`memset` / bytearray overwrite) immediately after use, preventing memory-dump extraction.
+3. **Key-at-Rest Encryption (KEK):**
+   - Private keys (`user_kyber.enc_key`, `user_dilithium.enc_key`) are never stored in plaintext. They are encrypted with AES-256-GCM using keys derived from a Master Password via **PBKDF2-HMAC-SHA256 (600,000 rounds)**.
+4. **Chunked Streaming Vault Engine (`.qvault`):**
+   - Files of arbitrary size (10 MB to 10+ GB) are processed in 64 KB blocks with unique sequential nonces. Memory consumption remains $O(1)$ constant (~64 KB).
+5. **DoD 5220.22-M Secure Shredding:**
+   - When files are locked or shredded, storage sectors are overwritten with 3 passes (0x00, 0xFF, CSPRNG bytes) with forced flush (`fsync`) before unlink.
+6. **TCP Socket Network & Anti-Replay Defense:**
+   - Real TCP socket server and client implementation with monotonic sequence numbers, sliding time window (30s), and nonce caching.
+
+---
+
 ## 🏛️ Architecture
 
 ```
@@ -44,7 +63,7 @@ Hostile state actors and cyber syndicates are actively eavesdropping and stockpi
   +---------------------------------------+       +---------------------------------------+
   | 1. Ephemeral Kyber-768 Key Generation |       | 3. Dilithium Identity Verification    |
   | 2. Dilithium-3 Identity Signature     | ====> | 4. Kyber-768 Key Encapsulation (KEM)  |
-  |                                       |       | 5. Dilithium Signature Generation     |
+  |    (Timestamp + Nonce + Sequence)     |       | 5. Dilithium Signature Generation     |
   +---------------------------------------+       +-------------------+-------------------+
                        ^                                              |
                        | <============================================+
@@ -66,34 +85,26 @@ Hostile state actors and cyber syndicates are actively eavesdropping and stockpi
 
 ---
 
-## ✨ Key Features
-
-1. **NIST FIPS 203 & 204 Standard Alignment:**
-   - **CRYSTALS-Kyber-768 (ML-KEM-768):** Lattice-based Module-LWE key encapsulation.
-   - **CRYSTALS-Dilithium-3 (ML-DSA-65):** Lattice-based digital signature preventing Man-in-the-Middle (MITM) attacks.
-2. **High-Performance Hybrid Pipeline:**
-   - Fast symmetric data payload encryption with **AES-256-GCM**.
-   - Zero quantum degradation (AES-256 maintains 128-bit quantum security against Grover's algorithm).
-3. **Quantum Vault Engine (`.qvault`):**
-   - Tamper-proof, cryptographically sealed storage container for documents, images, and classified databases.
-4. **Interactive Security Dashboard:**
-   - Visual Streamlit application featuring live crypto benchmarking, interactive file vaulting, and simulated MITM/HNDL cyber defense.
-5. **Developer SDK & Android Integration:**
-   - Clean, lightweight Python and Android (Kotlin/JNI) APIs for single-line integration into banking and enterprise communication apps.
-
----
-
 ## 📂 Repository Structure
 
 ```
 Q-Shield-Quantum-Safe-Vault/
+├── .github/
+│   └── workflows/ci.yml        # Multi-OS CI/CD Pipeline (Ubuntu, macOS, Windows)
 ├── src/
 │   └── qshield/
 │       ├── core/               # Kyber-768, Dilithium-3 & AES-GCM engine
 │       ├── vault/              # Local Quantum Vault storage manager (.qvault)
-│       ├── protocol/           # Peer-to-peer PQC handshake & attack defense
+│       ├── protocol/           # Peer-to-peer PQC TCP handshake & attack defense
 │       ├── sdk/                # Developer client library
 │       └── cli.py              # Unified Command Line Interface
+├── native/                     # Native C/C++ AVX2/NEON constant-time acceleration
+│   ├── pqcrypto_core.h
+│   └── pqcrypto_core.c
+├── mobile/android/             # Android Kotlin / JNI Library Module
+│   └── qshield-sdk/
+│       ├── build.gradle.kts
+│       └── src/main/cpp/native-lib.cpp
 ├── docs/
 │   ├── basvuru_formu.md        # Kastamonu Üniversitesi Ar-Ge Proje Pazarı Başvuru Formu
 │   ├── proje_fazlari.md        # Resmi Geliştirme Fazları ve Yol Haritası
@@ -101,11 +112,15 @@ Q-Shield-Quantum-Safe-Vault/
 ├── tests/
 │   ├── test_kyber.py           # Unit tests for ML-KEM encapsulation & decapsulation
 │   ├── test_dilithium.py       # Unit tests for ML-DSA signature verification & tampering
-│   ├── test_vault.py           # Unit tests for Quantum Vault storage & recovery
-│   └── test_protocol.py        # Unit tests for PQC handshake & MITM interception
+│   ├── test_protocol.py        # Unit tests for PQC handshake & MITM interception
+│   ├── test_key_at_rest.py     # Unit tests for PBKDF2 KEK password protection
+│   ├── test_streaming.py       # Unit tests for 64 KB chunked streaming encryption
+│   └── test_fuzzing.py         # Fuzzing tests for malformed & corrupted payloads
 ├── dashboard/                  # Streamlit Interactive Security Center (faz4_dashboard.py)
 ├── pyproject.toml              # Modern Python packaging configuration
 ├── requirements.txt            # Production dependencies
+├── SECURITY.md                 # Security vulnerability disclosure policy
+├── CONTRIBUTING.md             # Contribution guidelines
 ├── LICENSE                     # MIT License
 └── run_tests.py                # Standalone automated test runner
 ```
@@ -114,11 +129,6 @@ Q-Shield-Quantum-Safe-Vault/
 
 ## ⚡ Installation
 
-### Prerequisites
-- Python 3.10, 3.11, 3.12, or 3.13
-- Git
-
-### Setup
 ```bash
 # Clone the repository
 git clone https://github.com/meryemgcl/Q-Shield-Quantum-Safe-Vault.git
@@ -130,107 +140,63 @@ pip install -r requirements.txt
 
 ---
 
-## 🚀 Quick Start
-
-### 1. Command Line Interface (CLI)
+## 🚀 Command Line Interface (CLI)
 
 ```bash
 # Run latency and key size benchmarks comparing RSA vs PQC
-python -m qshield.cli benchmark
+python -m src.qshield.cli benchmark
 
-# Encrypt and lock any file into the Quantum Vault
-python -m qshield.cli lock "financial_audit_2026.pdf"
+# Encrypt and lock any file into the Quantum Vault (Streaming)
+python -m src.qshield.cli lock "financial_audit_2026.pdf" --delete
 
 # Unlock and restore an encrypted vault container
-python -m qshield.cli unlock "vault_storage/financial_audit_1789322260.qvault"
+python -m src.qshield.cli unlock "vault_storage/financial_audit_1789322260.qvault"
 
-# List all files currently protected by the Quantum Vault
-python -m qshield.cli list
+# Securely shred and destroy a sensitive file (DoD 5220.22-M)
+python -m src.qshield.cli shred "unclassified_draft.docx"
 
-# Run peer-to-peer PQC protocol and cyber defense simulation
-python -m qshield.cli protocol
+# Start a real PQC TCP Socket Server
+python -m src.qshield.cli listen --port 9123 --node "Bank_Mainframe"
+
+# Connect via real TCP socket and send an encrypted quantum payload
+python -m src.qshield.cli connect --host 127.0.0.1 --port 9123 --target "Bank_Mainframe" --msg "Wire Transfer #402"
 
 # Launch the interactive Streamlit Web Security Dashboard
-python -m qshield.cli dashboard
+python -m src.qshield.cli dashboard
 ```
-
-### 2. Python Developer SDK
-
-```python
-from qshield_sdk import QShieldClient
-
-# Initialize Q-Shield client
-client = QShieldClient(client_id="Banking_Terminal_01")
-
-# Lock confidential records into the Quantum Vault
-vault_path = client.lock_to_vault("confidential_records.xlsx")
-print(f"Vault container generated: {vault_path}")
-
-# Unlock and decrypt back to plaintext
-restored_path = client.unlock_from_vault(vault_path)
-print(f"Restored file verified: {restored_path}")
-```
-
-### 3. Interactive Web Dashboard
-
-```bash
-streamlit run faz4_dashboard.py
-```
-Open your browser at `http://localhost:8501` to view live benchmarks, drag-and-drop file vaulting, and simulated MITM/HNDL attack defense.
 
 ---
 
-## 📊 Cryptographic Benchmarks
+## 📱 Mobile (Android) SDK Integration
 
-*Empirical latency and key size analysis run on standard hardware (Intel Core / AMD Ryzen, Windows 11 / Linux x86_64):*
-
-| Algorithm | Type | Quantum Resistant? | Keygen (ms) | Enc / KEM (ms) | Dec / KEM (ms) | Public Key | Ciphertext | Security Basis |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| **RSA-2048** | Classical | ❌ **Vulnerable (Shor)** | 67.8 ms | 2.1 ms | 1.1 ms | 294 B | 256 B | Integer Factorization (IFP) |
-| **RSA-4096** | Classical | ❌ **Vulnerable (Shor)** | 668.8 ms | 0.2 ms | 6.2 ms | 550 B | 512 B | Integer Factorization (IFP) |
-| **ECDH (P-256)** | Classical | ❌ **Vulnerable (Shor)** | 1.9 ms | 0.6 ms | 0.1 ms | 91 B | 91 B | Elliptic Curve DLP |
-| **Q-Shield (Kyber-768)** | **PQC** | ✅ **IMMUNE** | **52.9 ms** | **93.6 ms** | **12.9 ms** | **1,184 B** | **1,088 B** | **Module-LWE (Lattice)** |
-| **Q-Shield (Dilithium-3)** | **PQC Sig**| ✅ **IMMUNE** | **1.2 ms** | **0.03 ms (Sign)** | **0.03 ms (Verify)**| **1,952 B** | **3,293 B (Sig)**| **Module-SIS (Lattice)** |
+Located in [`mobile/android/qshield-sdk`](mobile/android/qshield-sdk):
+- Native C++ JNI bridge (`native-lib.cpp`) interfacing hardware-backed ARM NEON instructions.
+- Kotlin client class (`QShieldClient.kt`) interfacing Android StrongBox Keystore.
+- Streaming encrypted file vaulting directly on Android internal storage.
 
 ---
 
-## 🧪 Testing
-
-Execute the automated test suite covering all cryptographic primitives and protocol stages:
+## 🧪 Testing & CI/CD
 
 ```bash
+# Run full automated test suite (Unit, Streaming, Key-at-Rest, Fuzzing)
 python run_tests.py
 ```
 
-Expected output:
+Output:
 ```
-test_dilithium_all (__main__.TestQShield.test_dilithium_all) ... ok
-test_kyber_all (__main__.TestQShield.test_kyber_all) ... ok
-test_protocol_all (__main__.TestQShield.test_protocol_all) ... ok
+test_01_kyber_primitives (__main__.TestQShieldSuite.test_01_kyber_primitives) ... ok
+test_02_dilithium_signatures (__main__.TestQShieldSuite.test_02_dilithium_signatures) ... ok
+test_03_protocol_and_mitm (__main__.TestQShieldSuite.test_03_protocol_and_mitm) ... ok
+test_04_key_at_rest_protection (__main__.TestQShieldSuite.test_04_key_at_rest_protection) ... ok
+test_05_streaming_large_file (__main__.TestQShieldSuite.test_05_streaming_large_file) ... ok
+test_06_fuzzing_integrity (__main__.TestQShieldSuite.test_06_fuzzing_integrity) ... ok
 
 ----------------------------------------------------------------------
-Ran 3 tests in 0.585s
+Ran 6 tests in 3.220s
 
 OK
 ```
-
----
-
-## 📅 Project Phases & Roadmap
-
-- [x] **Phase 1 (Core Cryptography):** CRYSTALS-Kyber-768 KEM, CRYSTALS-Dilithium-3 digital signatures, and AES-256-GCM hybrid cipher benchmarking.
-- [x] **Phase 2 (Quantum Vault MVP):** Tamper-proof `.qvault` binary container, local metadata indexing, and file encryption/decryption.
-- [x] **Phase 3 (PQC Protocol):** 3-way authenticated handshake, forward secrecy, and active MITM & HNDL attack defense simulation.
-- [x] **Phase 4 (Expansion & SDK):** Streamlit security center, unified CLI, modular Python SDK, and Android `.aar` architecture specs.
-
----
-
-## 🎓 Academic & Competition Notice
-
-This project was engineered for the **Kastamonu University 1st R&D Project Market (1. Ar-Ge Proje Pazarı)**.  
-- **Application Field:** Natural & Applied Sciences / Software & Information Technologies  
-- **Lead Developer:** Meryem Güçlü  
-- **Estimated Budget:** 45,000 TL (Software testing, cryptographic audit, and server relay infrastructure).
 
 ---
 
