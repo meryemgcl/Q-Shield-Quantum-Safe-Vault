@@ -1,4 +1,4 @@
-﻿from crypto_core import Kyber768, KYBER_PK_SIZE, KYBER_SK_SIZE, KYBER_CIPHERTEXT_SIZE, KYBER_SS_SIZE
+from src.qshield.crypto_core import Kyber768, KYBER_PK_SIZE, KYBER_SK_SIZE, KYBER_CIPHERTEXT_SIZE, KYBER_SS_SIZE
 
 def test_kyber_keygen():
     pk, sk = Kyber768.keygen()

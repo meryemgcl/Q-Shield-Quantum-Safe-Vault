@@ -1,4 +1,4 @@
-﻿"""
+"""
 Q-Shield Command Line Interface (CLI)
 Usage:
     python -m src.qshield.cli benchmark
@@ -22,9 +22,9 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-from faz1_crypto_core import run_benchmarks
-from faz2_quantum_vault import QuantumVault, secure_shred
-from faz3_pqc_protocol import run_protocol_demo, PQCSocketServer, PQCSocketClient
+from .benchmark import run_benchmarks
+from .quantum_vault import QuantumVault, secure_shred
+from .pqc_protocol import run_protocol_demo, PQCSocketServer, PQCSocketClient
 
 def main():
     parser = argparse.ArgumentParser(

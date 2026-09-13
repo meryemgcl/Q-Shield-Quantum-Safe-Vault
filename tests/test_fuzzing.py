@@ -1,11 +1,11 @@
-﻿import os
+import os
 from pathlib import Path
-from faz2_quantum_vault import QuantumVault
+from src.qshield.quantum_vault import QuantumVault
 
 def test_fuzzing_corrupted_vault_file(tmp_path):
     vault_dir = tmp_path / "vault_storage"
     keys_dir = tmp_path / "vault_keys"
-    vault = QuantumVault(vault_dir=vault_dir, keys_dir=keys_dir)
+    vault = QuantumVault(master_password='test-password-123!', vault_dir=vault_dir, keys_dir=keys_dir)
 
     sample = tmp_path / "sample.txt"
     sample.write_text("Sensible Confidential Data", encoding="utf-8")

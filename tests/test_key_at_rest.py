@@ -1,5 +1,5 @@
-﻿import os
-from crypto_core import KeyAtRestManager
+import os
+from src.qshield.crypto_core import KeyAtRestManager
 
 def test_key_at_rest_roundtrip():
     raw_key = os.urandom(2400) # Kyber-768 SK size

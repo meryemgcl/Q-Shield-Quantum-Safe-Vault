@@ -1,4 +1,4 @@
-﻿"""
+"""
 Q-Shield Developer SDK & Client Library
 Mobil, Masaüstü ve Sunucu Uygulamaları için Kuantum Sonrası Kriptografi (PQC) SDK'sı.
 
@@ -15,9 +15,9 @@ Kullanım:
 
 import base64
 from typing import Dict, Any, Optional
-from crypto_core import Kyber768, Dilithium3, HybridCipher
-from faz2_quantum_vault import QuantumVault
-from faz3_pqc_protocol import PQCNode
+from .crypto_core import Kyber768, Dilithium3, HybridCipher
+from .quantum_vault import QuantumVault
+from .pqc_protocol import PQCNode, PQCSocketClient
 
 class QShieldClient:
     """

@@ -1,6 +1,6 @@
 ﻿import base64
-from faz3_pqc_protocol import PQCNode
-from crypto_core import Kyber768
+from src.qshield.pqc_protocol import PQCNode
+from src.qshield.crypto_core import Kyber768
 
 def test_pqc_handshake_and_messaging():
     alice = PQCNode("Alice_Test")

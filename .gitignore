@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -38,10 +38,11 @@ ENV/
 htmlcov/
 
 # Sensitive user keys and runtime data
-vault_keys/*.key
-restored_files/*
+vault_keys/
+!vault_keys/.gitkeep
+restored_files/
 !restored_files/.gitkeep
-vault_storage/*.qvault
+vault_storage/
 !vault_storage/.gitkeep
 temp_upload_*
 temp_unlock_*

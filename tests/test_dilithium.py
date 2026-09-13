@@ -1,4 +1,4 @@
-﻿from crypto_core import Dilithium3, DILITHIUM_PK_SIZE, DILITHIUM_SK_SIZE, DILITHIUM_SIG_SIZE
+from src.qshield.crypto_core import Dilithium3, DILITHIUM_PK_SIZE, DILITHIUM_SK_SIZE, DILITHIUM_SIG_SIZE
 
 def test_dilithium_keygen():
     pk, sk = Dilithium3.keygen()

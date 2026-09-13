@@ -1,4 +1,4 @@
-﻿"""
+"""
 Q-Shield FAZ 1: Şifreleme Çekirdeğinin İnşası ve Performans Karşılaştırma Testleri
 (Core Cryptography & Benchmarking)
 
@@ -11,13 +11,15 @@ Bu modül:
 """
 
 import os
-import sys
 import time
 import json
 from typing import Dict, Any
+import logging
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
 from cryptography.hazmat.primitives import hashes, serialization
-from crypto_core import Kyber768, Dilithium3, HybridCipher
+from .crypto_core import Kyber768, Dilithium3, HybridCipher
+
+logger = logging.getLogger(__name__)
 
 def benchmark_rsa_2048() -> Dict[str, Any]:
     # Keygen

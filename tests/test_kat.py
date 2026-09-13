@@ -1,11 +1,15 @@
-﻿import hashlib
-from crypto_core import Kyber768, Dilithium3, KYBER_PK_SIZE, KYBER_CIPHERTEXT_SIZE, DILITHIUM_PK_SIZE, DILITHIUM_SIG_SIZE
+import hashlib
+from src.qshield.crypto_core import Kyber768, Dilithium3, KYBER_PK_SIZE, KYBER_CIPHERTEXT_SIZE, DILITHIUM_PK_SIZE, DILITHIUM_SIG_SIZE
 
 def test_nist_deterministic_kat():
     """
-    Known Answer Test (KAT) Simulation:
+    Internal Determinism Test (NOT Official NIST KAT):
     Verifies that cryptographic primitives are mathematically deterministic
-    under fixed entropy vectors as mandated by NIST FIPS 203 & 204.
+    under fixed entropy vectors.
+    
+    NOTE: This is NOT a formal Known Answer Test (KAT) against NIST FIPS 203 & 204
+    reference `.rsp` vectors. It only ensures this specific implementation is 
+    internally consistent and repeatable.
     """
     # 1. SHAKE-256 known digest test
     shake_test = hashlib.shake_256(b"NIST_PQC_KAT_SEED").digest(32)

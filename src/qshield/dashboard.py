@@ -1,4 +1,4 @@
-﻿"""
+"""
 Q-Shield FAZ 4: Post-Quantum Siber Güvenlik Kontrol Paneli (Interactive Dashboard)
 Kastamonu Üniversitesi 1. Ar-Ge Proje Pazarı
 
@@ -13,10 +13,10 @@ import time
 import os
 import base64
 from pathlib import Path
-from crypto_core import Kyber768, Dilithium3, HybridCipher
-from faz1_crypto_core import benchmark_rsa_2048, benchmark_rsa_4096, benchmark_ecdh_p256, benchmark_kyber_768, benchmark_dilithium_3
-from faz2_quantum_vault import QuantumVault
-from faz3_pqc_protocol import PQCNode
+from .crypto_core import Kyber768, Dilithium3, HybridCipher
+from .benchmark import benchmark_rsa_2048, benchmark_rsa_4096, benchmark_ecdh_p256, benchmark_kyber_768, benchmark_dilithium_3
+from .quantum_vault import QuantumVault
+from .pqc_protocol import PQCNode
 
 st.set_page_config(
     page_title="Q-Shield: Kuantum Sonrası Siber Güvenlik",
@@ -296,16 +296,16 @@ qshield.sendQuantumMessage(
 
     st.subheader("🐍 Python SDK Entegrasyonu")
     st.code("""
-from qshield_sdk import QShieldClient
+from qshield.sdk import QShieldClient
 
-# İstemciyi başlat
+# Initialize client
 client = QShieldClient(client_id="ArGe_Merkezi")
 
-# Dosyayı tek komutla Kuantum Kasasına kilitle
+# Lock file into Quantum Vault
 vault_path = client.lock_to_vault("gizli_planlar.docx")
-print(f"Kilitlenen Kasa: {vault_path}")
+print(f"Locked vault: {vault_path}")
 
-# Kasadan geri çöz
+# Unlock from vault
 client.unlock_from_vault(vault_path)
     """, language="python")
 

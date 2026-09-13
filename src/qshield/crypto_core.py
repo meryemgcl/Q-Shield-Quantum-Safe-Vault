@@ -1,4 +1,4 @@
-﻿"""
+"""
 Q-Shield PQC Kriptografi Çekirdeği (Hardened Core Cryptography)
 NIST Post-Quantum Cryptography Standartları:
 - CRYSTALS-Kyber-768 (ML-KEM-768) : Anahtar Kapsülleme Mekanizması (KEM)
@@ -16,7 +16,7 @@ import hmac
 import json
 import base64
 import ctypes
-from typing import Tuple, Dict, Any, Optional, Union
+from typing import Tuple, Dict, Any, Optional, Union, List
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -59,13 +59,13 @@ KYBER_SK_SIZE = 2400   # Standart Kyber-768 gizli anahtar boyutu
 KYBER_CIPHERTEXT_SIZE = 1088 # 3 * 256 * 10/8 + 256 * 4/8 = 960 + 128 = 1088 bayt
 KYBER_SS_SIZE = 32     # 256-bit paylaşılan gizli anahtar
 
-def poly_add(a: list, b: list) -> list:
+def poly_add(a: List[int], b: List[int]) -> List[int]:
     return [(ai + bi) % KYBER_Q for ai, bi in zip(a, b)]
 
-def poly_sub(a: list, b: list) -> list:
+def poly_sub(a: List[int], b: List[int]) -> List[int]:
     return [(ai - bi) % KYBER_Q for ai, bi in zip(a, b)]
 
-def poly_mul_negacyclic_constant_time(a: list, b: list) -> list:
+def poly_mul_negacyclic_constant_time(a: List[int], b: List[int]) -> List[int]:
     """
     Z_q[x]/(x^256 + 1) halkasında sabit zamanlı (constant-time / no-early-exit)
     negacyclic polinom çarpımı. Zamanlama saldırılarını (timing attack) engeller.
@@ -85,7 +85,7 @@ def poly_mul_negacyclic_constant_time(a: list, b: list) -> list:
 # Geriye dönük uyumluluk takma adı
 poly_mul_negacyclic = poly_mul_negacyclic_constant_time
 
-def cbd2(raw_bytes: bytes) -> list:
+def cbd2(raw_bytes: bytes) -> List[int]:
     """Centered Binomial Distribution sampling (eta = 2). Sabit zamanlı bitmasking."""
     coeffs = []
     byte_arr = raw_bytes
@@ -107,7 +107,7 @@ def cbd2(raw_bytes: bytes) -> list:
         coeffs.append(0)
     return coeffs[:KYBER_N]
 
-def gen_matrix_poly(seed: bytes, i: int, j: int) -> list:
+def gen_matrix_poly(seed: bytes, i: int, j: int) -> List[int]:
     """SHAKE128 XOF ile deterministik uniform polinom üretimi."""
     xof = hashlib.shake_128(seed + bytes([i, j]))
     stream = xof.digest(768)
@@ -413,7 +413,7 @@ class KeyAtRestManager:
     @staticmethod
     def decrypt_key_at_rest(encrypted_record: Dict[str, Any], master_password: str) -> bytes:
         if encrypted_record.get("format") != "QSHIELD_KEK_V1":
-            raise ValueError("Bilinmeyen anahtar koruma formatı!")
+            raise ValueError("Unknown key protection format — expected QSHIELD_KEK_V1.")
         salt = base64.b64decode(encrypted_record["salt"])
         iv = base64.b64decode(encrypted_record["iv"])
         ciphertext = base64.b64decode(encrypted_record["ciphertext"])
@@ -431,24 +431,38 @@ class KeyAtRestManager:
             decrypted_sk = aesgcm.decrypt(iv, ciphertext, associated_data=b"QShield-Protected-Key-At-Rest")
             return decrypted_sk
         except Exception:
-            raise ValueError("GEÇERSİZ PAROLA: Kuantum anahtarının kilidi açılamadı!")
+            raise ValueError("INVALID PASSWORD: Failed to unlock quantum key — wrong master password.")
+
 
 
 # =====================================================================
-# HİBRİT ŞİFRELEME MOTORU (AES-256-GCM + KYBER-768 ENVELOPING)
+# HYBRID ENCRYPTION ENGINE (AES-256-GCM + KYBER-768 ENVELOPING)
 # =====================================================================
 class HybridCipher:
+    """
+    Kyber-768 KEM + HKDF-SHA256 → AES-256-GCM with optional Dilithium-3 signature.
+
+    Per-call random HKDF salt (RFC 5869 §3.1): each encryption generates a fresh
+    32-byte random salt stored in the envelope. This ensures AES key independence
+    even in the astronomically unlikely event of a Kyber shared-secret collision.
+    """
     MAGIC_HEADER = b"QSHIELD\x01"
 
     @staticmethod
-    def encrypt(data: bytes, recipient_kyber_pk: bytes, sender_dilithium_sk: Optional[bytes] = None) -> Dict[str, Any]:
+    def encrypt(
+        data: bytes,
+        recipient_kyber_pk: bytes,
+        sender_dilithium_sk: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
         kyber_ct, shared_secret = Kyber768.encapsulate(recipient_kyber_pk)
 
+        # RFC 5869 §3.1: use a fresh random salt per encryption call
+        hkdf_salt = os.urandom(32)
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b"Q-Shield-PQC-Hybrid-Salt-v1",
-            info=b"QShield-AES-256-GCM-Key",
+            salt=hkdf_salt,
+            info=b"QShield-AES-256-GCM-Key-v2",
         )
         aes_key = hkdf.derive(shared_secret)
 
@@ -458,38 +472,55 @@ class HybridCipher:
 
         signature = b""
         if sender_dilithium_sk is not None:
-            signature = Dilithium3.sign(kyber_ct + iv + encrypted_payload, sender_dilithium_sk)
+            signature = Dilithium3.sign(kyber_ct + iv + hkdf_salt + encrypted_payload, sender_dilithium_sk)
 
         return {
-            "version": 1,
+            "version": 2,
             "algorithm": "KYBER-768+AES-256-GCM",
             "signature_algo": "DILITHIUM-3" if signature else "NONE",
             "kyber_ciphertext": base64.b64encode(kyber_ct).decode("ascii"),
+            "hkdf_salt": base64.b64encode(hkdf_salt).decode("ascii"),
             "iv": base64.b64encode(iv).decode("ascii"),
             "payload": base64.b64encode(encrypted_payload).decode("ascii"),
             "signature": base64.b64encode(signature).decode("ascii") if signature else "",
         }
 
     @staticmethod
-    def decrypt(envelope: Dict[str, Any], recipient_kyber_sk: bytes, sender_dilithium_pk: Optional[bytes] = None) -> bytes:
+    def decrypt(
+        envelope: Dict[str, Any],
+        recipient_kyber_sk: bytes,
+        sender_dilithium_pk: Optional[bytes] = None,
+    ) -> bytes:
         kyber_ct = base64.b64decode(envelope["kyber_ciphertext"])
         iv = base64.b64decode(envelope["iv"])
         encrypted_payload = base64.b64decode(envelope["payload"])
         sig_str = envelope.get("signature", "")
 
+        # Support both v1 (static salt) and v2 (per-call random salt)
+        version = envelope.get("version", 1)
+        if version >= 2:
+            hkdf_salt: bytes = base64.b64decode(envelope["hkdf_salt"])
+            hkdf_info = b"QShield-AES-256-GCM-Key-v2"
+        else:
+            hkdf_salt = b"Q-Shield-PQC-Hybrid-Salt-v1"
+            hkdf_info = b"QShield-AES-256-GCM-Key"
+
         if sender_dilithium_pk is not None and sig_str:
             signature = base64.b64decode(sig_str)
-            signed_data = kyber_ct + iv + encrypted_payload
+            signed_data = kyber_ct + iv + (hkdf_salt if version >= 2 else b"") + encrypted_payload
             if not Dilithium3.verify(signed_data, signature, sender_dilithium_pk):
-                raise ValueError("GÜVENLİK HATASI: Dilithium imzası geçersiz! Paket tahrif edilmiş veya MITM saldırısı var!")
+                raise ValueError(
+                    "SECURITY ERROR: Dilithium-3 signature verification failed — "
+                    "packet may be tampered or a MITM attack is in progress."
+                )
 
         shared_secret = Kyber768.decapsulate(kyber_ct, recipient_kyber_sk)
 
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b"Q-Shield-PQC-Hybrid-Salt-v1",
-            info=b"QShield-AES-256-GCM-Key",
+            salt=hkdf_salt,
+            info=hkdf_info,
         )
         aes_key = hkdf.derive(shared_secret)
 
@@ -505,8 +536,9 @@ class HybridCipher:
     @staticmethod
     def unpack_binary(raw_bytes: bytes) -> Dict[str, Any]:
         if not raw_bytes.startswith(HybridCipher.MAGIC_HEADER):
-            raise ValueError("Geçersiz Q-Shield dosya başlığı!")
+            raise ValueError("Invalid Q-Shield binary envelope header.")
         header_len = len(HybridCipher.MAGIC_HEADER)
-        json_len = struct.unpack(">I", raw_bytes[header_len:header_len+4])[0]
-        json_bytes = raw_bytes[header_len+4:header_len+4+json_len]
+        json_len = struct.unpack(">I", raw_bytes[header_len:header_len + 4])[0]
+        json_bytes = raw_bytes[header_len + 4: header_len + 4 + json_len]
         return json.loads(json_bytes.decode("utf-8"))
+

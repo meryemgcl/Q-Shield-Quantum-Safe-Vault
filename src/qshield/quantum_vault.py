@@ -1,12 +1,12 @@
-﻿"""
-Q-Shield FAZ 2: "Quantum Vault" (Kuantum Kasası) Depolama Motoru
-(Production-Grade Streaming Vault & Key-at-Rest Protection)
+"""
+Q-Shield Phase 2: Quantum Vault — Streaming File Encryption & Key-at-Rest Protection
 
-Gelişmiş Özellikler:
-1. Akış Tabanlı Şifreleme (Chunked Streaming AES-GCM, 64 KB): GB boyutundaki dosyalar O(1) sabit RAM ile şifrelenir.
-2. Dinlenme Halinde Anahtar Koruması: Kyber ve Dilithium gizli anahtarları PBKDF2 (600.000 döngü) ile diskte şifrelenir.
-3. Güvenli Dosya İmhası (DoD 5220.22-M Shredding): Orijinal dosya 3 aşamalı (0x00, 0xFF, Random) ezilerek silinir.
-4. Bütünlük ve Manipülasyon Koruması: CRYSTALS-Dilithium-3 dijital imzası.
+Features:
+1. Chunked Streaming AES-GCM (64 KB blocks): O(1) RAM regardless of file size.
+2. Key-at-Rest Protection: Kyber and Dilithium private keys encrypted with
+   PBKDF2-HMAC-SHA256 (600,000 iterations) before writing to disk.
+3. Secure File Shredding (DoD 5220.22-M): 3-pass overwrite (0x00, 0xFF, CSPRNG) + fsync.
+4. Integrity Verification: CRYSTALS-Dilithium-3 digital signature over vault header.
 """
 
 import os
@@ -15,19 +15,23 @@ import time
 import json
 import base64
 import struct
+import logging
 import shutil
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from crypto_core import Kyber768, Dilithium3, HybridCipher, KeyAtRestManager, secure_zeroize
+from .crypto_core import Kyber768, Dilithium3, HybridCipher, KeyAtRestManager, secure_zeroize
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_VAULT_DIR = Path("vault_storage")
 DEFAULT_KEYS_DIR = Path("vault_keys")
 DEFAULT_RESTORE_DIR = Path("restored_files")
-CHUNK_SIZE = 64 * 1024 # 64 KB akış blok boyutu
+CHUNK_SIZE = 64 * 1024  # 64 KB streaming block size
 STREAM_MAGIC = b"QSTREAM\x01"
+
 
 def secure_shred(filepath: Path, passes: int = 3) -> None:
     """
@@ -61,8 +65,28 @@ class QuantumVault:
         self,
         vault_dir: Path = DEFAULT_VAULT_DIR,
         keys_dir: Path = DEFAULT_KEYS_DIR,
-        master_password: Optional[str] = "QShield-Default-Master-Password-2026!"
+        master_password: Optional[str] = None,
     ):
+        """
+        Initialize the Quantum Vault.
+
+        Args:
+            vault_dir: Directory to store encrypted .qvault files.
+            keys_dir: Directory to store PBKDF2-encrypted private key files.
+            master_password: Master password used to derive the Key Encryption Key (KEK).
+                **Required** — must be provided by the caller. A strong, unique password
+                is critical: the private keys protecting all vault contents are derived
+                from this value using PBKDF2-HMAC-SHA256 (600,000 iterations).
+
+        Raises:
+            ValueError: If master_password is None or an empty string.
+        """
+        if not master_password:
+            raise ValueError(
+                "master_password is required and must not be empty. "
+                "Provide a strong, unique password to protect private keys at rest. "
+                "Example: QuantumVault(master_password=getpass.getpass('Vault password: '))"
+            )
         self.vault_dir = Path(vault_dir)
         self.keys_dir = Path(keys_dir)
         self.master_password = master_password
@@ -70,8 +94,9 @@ class QuantumVault:
         self.keys_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_keys()
 
-    def _ensure_keys(self):
-        """Kullanıcının anahtarlarını kontrol eder veya şifreli olarak üretir."""
+    def _ensure_keys(self) -> None:
+        """Generate or load PBKDF2-encrypted Kyber and Dilithium key pairs."""
+
         kyber_pk_path = self.keys_dir / "user_kyber.pub"
         kyber_sk_path = self.keys_dir / "user_kyber.enc_key"
         dilithium_pk_path = self.keys_dir / "user_dilithium.pub"
@@ -90,11 +115,11 @@ class QuantumVault:
             enc_dsk_record = KeyAtRestManager.encrypt_key_at_rest(dsk, self.master_password)
             dilithium_sk_path.write_text(json.dumps(enc_dsk_record), encoding="utf-8")
 
-        # Açık anahtarlar
+        # Load public keys
         self.kyber_pk = kyber_pk_path.read_bytes()
         self.dilithium_pk = dilithium_pk_path.read_bytes()
 
-        # Gizli anahtarları KEK ile çözerek RAM'e yükle
+        # Decrypt private keys from KEK-protected records into RAM
         enc_kyber_record = json.loads(kyber_sk_path.read_text(encoding="utf-8"))
         self.kyber_sk = KeyAtRestManager.decrypt_key_at_rest(enc_kyber_record, self.master_password)
 
@@ -103,16 +128,17 @@ class QuantumVault:
 
     def lock_file_stream(self, source_path: str, delete_original: bool = False) -> str:
         """
-        Büyük dosyaları 64 KB'lık bloklar halinde akış (streaming) mimarisiyle şifreler.
-        RAM tüketimi dosya boyutu ne olursa olsun sabittir (~64 KB).
+        Encrypt a file using 64 KB chunked streaming AES-256-GCM.
+        RAM usage is O(1) regardless of file size (~64 KB working set).
         """
         src = Path(source_path)
         if not src.exists():
-            raise FileNotFoundError(f"Dosya bulunamadı: {source_path}")
+            raise FileNotFoundError(f"Source file not found: {source_path}")
 
         file_size = src.stat().st_size
         vault_filename = f"{src.stem}_{int(time.time())}.qvault"
         target_path = self.vault_dir / vault_filename
+
 
         # 1. KEM: Dosya için Kyber-768 ile oturum simetrik anahtarı kapsülle
         kyber_ct, shared_secret = Kyber768.encapsulate(self.kyber_pk)
@@ -176,7 +202,7 @@ class QuantumVault:
         """Akış (streaming) ile şifrelenmiş .qvault dosyasını çözer ve bütünlüğü teyit eder."""
         v_path = Path(vault_path)
         if not v_path.exists():
-            raise FileNotFoundError(f"Kasa dosyası bulunamadı: {vault_path}")
+            raise FileNotFoundError(f"Vault file not found: {vault_path}")
 
         out_path = Path(output_dir) if output_dir else DEFAULT_RESTORE_DIR
         out_path.mkdir(parents=True, exist_ok=True)
@@ -196,7 +222,7 @@ class QuantumVault:
 
                 # İmza teyidi
                 if not Dilithium3.verify(kyber_ct + base_iv + meta_json, meta_sig, self.dilithium_pk):
-                    raise ValueError("GÜVENLİK İHLALİ: Dosya başlığı ve Dilithium imzası geçersiz!")
+                    raise ValueError("SECURITY BREACH: Invalid Dilithium-3 signature on vault header!")
 
                 meta = json.loads(meta_json.decode("utf-8"))
                 original_name = meta["filename"]
@@ -258,23 +284,24 @@ class QuantumVault:
         return items
 
 def run_vault_demo():
-    print("=" * 80)
-    print("  Q-SHIELD FAZ 2: QUANTUM VAULT (STREAMING & KEY-AT-REST PROTECTION)")
-    print("=" * 80)
-    vault = QuantumVault()
+    logger.info("=" * 80)
+    logger.info("  Q-SHIELD PHASE 2: QUANTUM VAULT (STREAMING & KEY-AT-REST PROTECTION)")
+    logger.info("=" * 80)
+    vault = QuantumVault(master_password="demo-password-123!")
     sample = Path("test_stream_data.bin")
     sample.write_bytes(os.urandom(1024 * 128)) # 128 KB
-    print(f"[1/3] Test dosyası oluşturuldu: {sample.name} ({sample.stat().st_size} bayt)")
+    logger.info(f"[1/3] Test file created: {sample.name} ({sample.stat().st_size} bytes)")
 
     v_file = vault.lock_file(str(sample), delete_original=True)
-    print(f"[2/3] Dosya akış olarak kilitlendi: {v_file}")
+    logger.info(f"[2/3] File locked via streaming: {v_file}")
 
     restored = vault.unlock_file(v_file)
-    print(f"[3/3] Dosya akış olarak geri çözüldü: {restored}")
+    logger.info(f"[3/3] File unlocked via streaming: {restored}")
     assert Path(restored).stat().st_size == 1024 * 128
-    print("[BAŞARILI] Akış tabanlı şifreleme ve bütünlük kontrolü %100 doğrulandı!")
+    logger.info("[SUCCESS] Streaming encryption and integrity check 100% verified!")
     Path(restored).unlink()
     Path(v_file).unlink()
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     run_vault_demo()

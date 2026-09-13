@@ -1,4 +1,4 @@
-﻿"""
+"""
 Q-Shield FAZ 3: PQC İletişim Protokolü & Gerçek TCP Ağ Soket Katmanı
 (Production-Grade PQC Handshake, Real TCP Sockets & Anti-Replay Defense)
 
@@ -21,8 +21,12 @@ import select
 import base64
 import threading
 import struct
+import logging
 from typing import Dict, Any, Tuple, Optional, Set
-from crypto_core import Kyber768, Dilithium3, HybridCipher
+from .crypto_core import Kyber768, Dilithium3, HybridCipher
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+logger = logging.getLogger(__name__)
 
 TIMESTAMP_TOLERANCE_SECONDS = 30.0
 
@@ -88,10 +92,10 @@ class PQCNode:
         # 1. Anti-Replay: Zaman penceresi ve Nonce kontrolü
         now = time.time()
         if abs(now - pkt_time) > TIMESTAMP_TOLERANCE_SECONDS:
-            raise ValueError(f"YENİDEN OYNATMA TEHLİKESİ: Paket zaman aşımına uğramış! (Fark: {abs(now - pkt_time):.1f}s)")
+            raise ValueError(f"REPLAY DANGER: Packet expired! (Diff: {abs(now - pkt_time):.1f}s)")
 
         if nonce in self.seen_nonces:
-            raise ValueError(f"YENİDEN OYNATMA SALDIRISI: Bu paket nonce'u ({nonce}) daha önce kullanıldı!")
+            raise ValueError(f"REPLAY ATTACK: Packet nonce ({nonce}) has already been used!")
         self.seen_nonces.add(nonce)
 
         # 2. Dilithium İmza Doğrulaması (MITM Savunması)
@@ -104,7 +108,7 @@ class PQCNode:
             struct.pack(">Q", seq)
         )
         if not Dilithium3.verify(signed_payload, signature, sender_dilithium_pk):
-            raise PermissionError("GÜVENLİK İHLALİ: Alice'in Dilithium imzası geçersiz! Bağlantı reddedildi.")
+            raise PermissionError("SECURITY BREACH: Alice's Dilithium signature is invalid! Connection rejected.")
 
         self.in_sequence[sender_id] = seq
 
@@ -151,10 +155,10 @@ class PQCNode:
         seq = packet["seq"]
 
         now = time.time()
-        if abs(now - pkt_time) > TIMESTAMP_TOLERANCE_SECONDS:
-            raise ValueError("YENİDEN OYNATMA TEHLİKESİ: Cevap paketi zaman aşımına uğramış!")
+        if abs(time.time() - pkt_time) > TIMESTAMP_TOLERANCE_SECONDS:
+            raise ValueError("REPLAY DANGER: Reply packet expired!")
         if nonce in self.seen_nonces:
-            raise ValueError("YENİDEN OYNATMA SALDIRISI: Mükerrer cevap nonce'u!")
+            raise ValueError("REPLAY ATTACK: Duplicate reply nonce!")
         self.seen_nonces.add(nonce)
 
         resp_payload = (
@@ -166,53 +170,56 @@ class PQCNode:
             struct.pack(">Q", seq)
         )
         if not Dilithium3.verify(resp_payload, signature, bob_dilithium_pk):
-            raise PermissionError("GÜVENLİK İHLALİ: Bob'un Dilithium imzası geçersiz! MITM şüphesi.")
+            raise PermissionError("SECURITY BREACH: Bob's Dilithium signature is invalid! Suspected MITM attack.")
 
         self.in_sequence[sender_id] = seq
         session_key = Kyber768.decapsulate(kyber_ct, self.kyber_sk)
         self.active_sessions[sender_id] = session_key
 
     def send_secure_message(self, peer_id: str, message: str) -> Dict[str, Any]:
-        session_key = self.active_sessions.get(peer_id)
-        if not session_key:
-            raise ValueError(f"{peer_id} ile aktif PQC oturumu yok.")
+        """Adım 3: Karşılıklı Kuantum oturum anahtarı ile mesaj gönder."""
+        if peer_id not in self.active_sessions:
+            raise ValueError(f"No active PQC session with {peer_id}.")
 
-        seq = self.out_sequence.get(peer_id, 100) + 1
+        aes_key = self.active_sessions[peer_id]
+        iv = os.urandom(12)
+        
+        seq = self.out_sequence.get(peer_id, 1) + 1
         self.out_sequence[peer_id] = seq
 
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        aesgcm = AESGCM(session_key)
-        iv = os.urandom(12)
-        aad = f"{self.node_id}:{peer_id}:{seq}".encode("utf-8")
-        ciphertext = aesgcm.encrypt(iv, message.encode("utf-8"), associated_data=aad)
+        aesgcm = AESGCM(aes_key)
+        # Bütünlük için SENDER + TARGET + SEQ auth data olarak eklenir
+        auth_data = f"{self.node_id}:{peer_id}:{seq}".encode("utf-8")
+        ct = aesgcm.encrypt(iv, message.encode("utf-8"), associated_data=auth_data)
 
         return {
             "type": "SECURE_MESSAGE",
             "sender": self.node_id,
-            "recipient": peer_id,
+            "target": peer_id,
             "seq": seq,
             "iv": base64.b64encode(iv).decode("ascii"),
-            "payload": base64.b64encode(ciphertext).decode("ascii"),
-            "timestamp": time.time()
+            "ciphertext": base64.b64encode(ct).decode("ascii")
         }
 
     def receive_secure_message(self, packet: Dict[str, Any]) -> str:
+        """Adım 4: Gelen şifreli mesajı çöz."""
         sender = packet["sender"]
-        session_key = self.active_sessions.get(sender)
-        if not session_key:
-            raise ValueError(f"{sender} ile aktif oturum anahtarı bulunamadı.")
+        if sender not in self.active_sessions:
+            raise ValueError(f"No active session key found for {sender}.")
 
         seq = packet["seq"]
         last_seq = self.in_sequence.get(sender, 0)
+        
+        # Monotonik artış kontrolü
         if seq <= last_seq:
-            raise ValueError(f"MONOTONİK SIRA HATASI: Beklenen > {last_seq}, gelen {seq} (Olası Replay Saldırısı)")
+            raise ValueError(f"MONOTONIC SEQUENCE ERROR: Expected > {last_seq}, got {seq} (Possible Replay Attack)")
         self.in_sequence[sender] = seq
 
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        aes_key = self.active_sessions[sender]
         iv = base64.b64decode(packet["iv"])
-        ciphertext = base64.b64decode(packet["payload"])
+        ciphertext = base64.b64decode(packet.get("payload", packet.get("ciphertext")))
         aad = f"{sender}:{self.node_id}:{seq}".encode("utf-8")
-        aesgcm = AESGCM(session_key)
+        aesgcm = AESGCM(aes_key)
         plaintext = aesgcm.decrypt(iv, ciphertext, associated_data=aad)
         return plaintext.decode("utf-8")
 
@@ -236,7 +243,7 @@ class PQCSocketServer:
         self.sock.bind((self.host, self.port))
         self.sock.listen(5)
         self.running = True
-        print(f"[PQC Server] {self.node.node_id} {self.host}:{self.port} adresinde dinliyor...")
+        logger.info(f"[PQC Server] Node {self.node.node_id} listening on {self.host}:{self.port}...")
 
         while self.running:
             try:
@@ -269,11 +276,11 @@ class PQCSocketServer:
             if msg_data:
                 msg_pkt = json.loads(msg_data.decode("utf-8"))
                 decrypted = self.node.receive_secure_message(msg_pkt)
-                print(f"[PQC Server] İstemciden ({addr}) şifreli mesaj alındı: '{decrypted}'")
-                reply_pkt = self.node.send_secure_message(msg_pkt["sender"], "Mesaj Alındı ve Kuantum Doğrulandı: OK")
+                logger.info(f"[PQC Server] Encrypted message received from client ({addr}): '{decrypted}'")
+                reply_pkt = self.node.send_secure_message(msg_pkt["sender"], "Message Received & Quantum Verified: OK")
                 conn.sendall(json.dumps(reply_pkt).encode("utf-8"))
         except Exception as e:
-            print(f"[PQC Server] Bağlantı hatası: {e}")
+            logger.error(f"[PQC Server] Connection error: {e}")
         finally:
             conn.close()
 
@@ -311,40 +318,41 @@ class PQCSocketClient:
 
 
 def run_protocol_demo():
-    print("=" * 80)
-    print("  Q-SHIELD FAZ 3: PQC İLETİŞİM PROTOKOLÜ & GERÇEK TCP SOKET TESTİ")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("  Q-SHIELD PHASE 3: PQC COMMUNICATION PROTOCOL & REAL TCP SOCKET TEST")
+    logger.info("=" * 80)
 
-    # 1. Gerçek TCP Soket Sunucusu ve İstemcisi Başlatılıyor
-    server = PQCSocketServer(host="127.0.0.1", port=9123, node_id="Banka_Sunucusu")
+    # 1. Start TCP Server
+    server = PQCSocketServer(host="127.0.0.1", port=9123, node_id="Bank_Server")
     server_thread = threading.Thread(target=server.start, kwargs={"once": True}, daemon=True)
     server_thread.start()
     time.sleep(0.1)
 
-    # 2. İstemci bağlanıyor ve TCP üzerinde PQC Handshake yapıyor
-    client = PQCSocketClient(host="127.0.0.1", port=9123, node_id="Mobil_Istemci")
-    print("[1/3] TCP soketi üzerinden PQC el sıkışma yapılıyor...")
-    reply = client.connect_and_send("Banka_Sunucusu", "EFT Transfer Onayı #9872 - 50.000 TL")
-    print(f"[2/3] Sunucudan gelen PQC çözümlenmiş cevap: '{reply}'")
+    # 2. Client connects and performs PQC Handshake over TCP
+    client = PQCSocketClient(host="127.0.0.1", port=9123, node_id="Mobile_Client")
+    logger.info("[1/3] Performing PQC handshake over TCP socket...")
+    reply = client.connect_and_send("Bank_Server", "EFT Transfer Approval #9872 - $50,000")
+    logger.info(f"[2/3] Decrypted PQC reply from server: '{reply}'")
     server.stop()
 
-    # 3. Anti-Replay Saldırı Testi
-    print("\n[3/3] Yeniden Oynatma (Replay) Saldırısı Simülasyonu:")
+    # 3. Anti-Replay Attack Test
+    logger.info("\n[3/3] Replay Attack Simulation:")
     alice = PQCNode("Alice")
     bob = PQCNode("Bob")
     init_pkt = alice.initiate_handshake(bob.node_id)
 
-    # Normal kabul
+    # Normal acceptance
     bob.respond_handshake(init_pkt)
-    print(" -> İlk paket Bob tarafından başarıyla işlendi.")
+    logger.info(" -> First packet successfully processed by Bob.")
 
-    # Aynı paketin saldırgan tarafından tekrar gönderilmesi
+    # Attacker replays the same packet
     try:
         bob.respond_handshake(init_pkt)
-        print(" -> [HATA] Mükerrer paket tespit edilemedi!")
+        logger.error(" -> [ERROR] Duplicate packet was not detected!")
     except ValueError as e:
-        print(f" -> [SAVUNMA BAŞARILI] Replay Saldırısı Bloklandı: {e}")
+        logger.info(f" -> [DEFENSE SUCCESSFUL] Replay Attack Blocked: {e}")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     run_protocol_demo()
 
