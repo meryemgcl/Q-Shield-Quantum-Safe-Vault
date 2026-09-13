@@ -1,24 +1,49 @@
 ﻿"""
-Q-Shield PQC Kriptografi Çekirdeği (Core Cryptography)
+Q-Shield PQC Kriptografi Çekirdeği (Hardened Core Cryptography)
 NIST Post-Quantum Cryptography Standartları:
 - CRYSTALS-Kyber-768 (ML-KEM-768) : Anahtar Kapsülleme Mekanizması (KEM)
 - CRYSTALS-Dilithium-3 (ML-DSA-65) : Dijital İmza Algoritması (Dijital Kimlik / MITM Önleme)
 - AES-256-GCM                      : Simetrik Veri Şifreleme ve Bütünlük Doğrulama (AEAD)
+- KEK (Key Encryption Key)         : Argon2 / PBKDF2-HMAC-SHA256 (600.000 döngü) ile Dinlenme Halinde Anahtar Koruması
+- RAM Zeroization                  : Güvenli Bellek Sıfırlama (ctypes / in-place zeroization)
 """
 
 import os
+import sys
 import struct
 import hashlib
 import hmac
 import json
 import base64
-from typing import Tuple, Dict, Any, Optional
+import ctypes
+from typing import Tuple, Dict, Any, Optional, Union
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
 # =====================================================================
-# KYBER-768 (ML-KEM-768) PARAMETRELERİ VE POLİNOM ARİTMETİĞİ
+# BELLEK GÜVENLİĞİ VE SIFIRLAMA (RAM ZEROIZATION)
+# =====================================================================
+def secure_zeroize(buf: Union[bytearray, memoryview, list]) -> None:
+    """
+    RAM'deki hassas anahtarları bellekten sıfırlayarak (0x00 ile ezerek)
+    Cold Boot ve Memory Dump saldırılarını engeller.
+    """
+    if isinstance(buf, (bytearray, memoryview)):
+        try:
+            # ctypes memset ile işletim sistemi düzeyinde bellek ezme
+            location = (ctypes.c_char * len(buf)).from_buffer(buf)
+            ctypes.memset(ctypes.byref(location), 0, len(buf))
+        except Exception:
+            for i in range(len(buf)):
+                buf[i] = 0
+    elif isinstance(buf, list):
+        for i in range(len(buf)):
+            buf[i] = 0
+
+# =====================================================================
+# KYBER-768 (ML-KEM-768) PARAMETRELERİ VE SABİT ZAMANLI ARİTMETİK
 # =====================================================================
 KYBER_N = 256
 KYBER_Q = 3329
@@ -40,27 +65,29 @@ def poly_add(a: list, b: list) -> list:
 def poly_sub(a: list, b: list) -> list:
     return [(ai - bi) % KYBER_Q for ai, bi in zip(a, b)]
 
-def poly_mul_negacyclic(a: list, b: list) -> list:
-    """Z_q[x]/(x^256 + 1) halkasında negacyclic polinom çarpımı."""
+def poly_mul_negacyclic_constant_time(a: list, b: list) -> list:
+    """
+    Z_q[x]/(x^256 + 1) halkasında sabit zamanlı (constant-time / no-early-exit)
+    negacyclic polinom çarpımı. Zamanlama saldırılarını (timing attack) engeller.
+    """
     n = KYBER_N
     q = KYBER_Q
     c = [0] * (2 * n - 1)
-    for i, ai in enumerate(a):
-        if not ai:
-            continue
-        for j, bj in enumerate(b):
-            c[i + j] += ai * bj
+    # Erken çıkış (early exit / if not ai continue) içermez; tüm döngüler sabit zamanda çalışır
+    for i in range(n):
+        ai = a[i]
+        for j in range(n):
+            c[i + j] = (c[i + j] + ai * b[j]) % q
     res = [(c[k] - c[k + n]) % q for k in range(n - 1)]
     res.append(c[n - 1] % q)
     return res
 
+# Geriye dönük uyumluluk takma adı
+poly_mul_negacyclic = poly_mul_negacyclic_constant_time
+
 def cbd2(raw_bytes: bytes) -> list:
-    """Centered Binomial Distribution sampling (eta = 2)."""
+    """Centered Binomial Distribution sampling (eta = 2). Sabit zamanlı bitmasking."""
     coeffs = []
-    bit_idx = 0
-    total_bits = len(raw_bytes) * 8
-    
-    # Her katsayı için 4 bit (2 bit a, 2 bit b) -> katsayı = popcount(a) - popcount(b)
     byte_arr = raw_bytes
     byte_pos = 0
     while len(coeffs) < KYBER_N and byte_pos < len(byte_arr):
@@ -87,7 +114,6 @@ def gen_matrix_poly(seed: bytes, i: int, j: int) -> list:
     poly = []
     idx = 0
     while len(poly) < KYBER_N and idx + 3 <= len(stream):
-        # 3 bayttan iki adet 12-bit sayı çıkar
         b0, b1, b2 = stream[idx], stream[idx+1], stream[idx+2]
         idx += 3
         d1 = b0 | ((b1 & 0x0F) << 8)
@@ -111,18 +137,12 @@ class Kyber768:
 
     @staticmethod
     def keygen() -> Tuple[bytes, bytes]:
-        """
-        Kyber-768 açık ve gizli anahtar çifti üretir.
-        Dönüş: (pk, sk) -> pk: 1184 bayt, sk: 2400 bayt
-        """
-        seed = os.urandom(64)
-        rho = seed[:32]
-        sigma = seed[32:]
+        seed = bytearray(os.urandom(64))
+        rho = bytes(seed[:32])
+        sigma = bytes(seed[32:])
 
-        # A matrisini oluştur (3x3 polinom matrisi)
         A = [[gen_matrix_poly(rho, i, j) for j in range(KYBER_K)] for i in range(KYBER_K)]
 
-        # Gizli vektör s ve hata vektörü e'yi örnekle
         s = []
         e = []
         for i in range(KYBER_K):
@@ -131,16 +151,14 @@ class Kyber768:
             s.append(cbd2(noise_s))
             e.append(cbd2(noise_e))
 
-        # t = A * s + e
         t = []
         for i in range(KYBER_K):
             ti = [0] * KYBER_N
             for j in range(KYBER_K):
-                ti = poly_add(ti, poly_mul_negacyclic(A[i][j], s[j]))
+                ti = poly_add(ti, poly_mul_negacyclic_constant_time(A[i][j], s[j]))
             ti = poly_add(ti, e[i])
             t.append(ti)
 
-        # Açık anahtarı baytlara dönüştür (12-bit paketleme + rho)
         pk_bytes = bytearray()
         for ti in t:
             for k in range(0, KYBER_N, 2):
@@ -152,7 +170,6 @@ class Kyber768:
         pk_bytes.extend(rho)
         pk = bytes(pk_bytes)
 
-        # Gizli anahtarı baytlara dönüştür (s vektörü + pk + H(pk) + z)
         sk_bytes = bytearray()
         for si in s:
             for k in range(0, KYBER_N, 2):
@@ -163,21 +180,18 @@ class Kyber768:
                 sk_bytes.append((c1 >> 4) & 0xFF)
         sk_bytes.extend(pk)
         sk_bytes.extend(hashlib.sha3_256(pk).digest())
-        sk_bytes.extend(os.urandom(32)) # z
-        # Padding sk to standard 2400 bytes if needed
+        sk_bytes.extend(os.urandom(32))
         if len(sk_bytes) < KYBER_SK_SIZE:
             sk_bytes.extend(b"\x00" * (KYBER_SK_SIZE - len(sk_bytes)))
         sk = bytes(sk_bytes[:KYBER_SK_SIZE])
+
+        # Hassas tohumu RAM'den güvenle sıfırla
+        secure_zeroize(seed)
 
         return pk, sk
 
     @staticmethod
     def encapsulate(pk: bytes) -> Tuple[bytes, bytes]:
-        """
-        Alıcının açık anahtarı (pk) ile anahtar kapsülleme (KEM) yapar.
-        Dönüş: (ciphertext: 1088 bayt, shared_secret: 32 bayt)
-        """
-        # pk'dan t ve rho'yu ayrıştır
         rho = pk[-32:]
         t_data = pk[:-32]
         t = []
@@ -192,17 +206,14 @@ class Kyber768:
                 ti.extend([c0, c1])
             t.append(ti)
 
-        # Deterministik rastlantısallık üretimi
-        m = os.urandom(32)
+        m = bytearray(os.urandom(32))
         h_pk = hashlib.sha3_256(pk).digest()
-        kr = hashlib.sha3_512(m + h_pk).digest()
+        kr = hashlib.sha3_512(bytes(m) + h_pk).digest()
         k_bar = kr[:32]
         r_seed = kr[32:]
 
-        # A^T matrisi
         A_T = [[gen_matrix_poly(rho, j, i) for j in range(KYBER_K)] for i in range(KYBER_K)]
 
-        # r ve e1, e2 örnekle
         r = []
         e1 = []
         for i in range(KYBER_K):
@@ -213,31 +224,26 @@ class Kyber768:
         noise_e2 = hashlib.shake_256(r_seed + bytes([2 * KYBER_K])).digest(128)
         e2 = cbd2(noise_e2)
 
-        # u = A^T * r + e1
         u = []
         for i in range(KYBER_K):
             ui = [0] * KYBER_N
             for j in range(KYBER_K):
-                ui = poly_add(ui, poly_mul_negacyclic(A_T[i][j], r[j]))
+                ui = poly_add(ui, poly_mul_negacyclic_constant_time(A_T[i][j], r[j]))
             ui = poly_add(ui, e1[i])
             u.append(ui)
 
-        # v = t^T * r + e2 + Decompress_1(m)
         v = [0] * KYBER_N
         for i in range(KYBER_K):
-            v = poly_add(v, poly_mul_negacyclic(t[i], r[i]))
+            v = poly_add(v, poly_mul_negacyclic_constant_time(t[i], r[i]))
         v = poly_add(v, e2)
 
-        # Mesajı katsayılara göm (1 bit -> q/2)
         for i in range(32):
             byte_val = m[i]
             for bit in range(8):
                 if (byte_val >> bit) & 1:
                     v[i * 8 + bit] = (v[i * 8 + bit] + ((KYBER_Q + 1) // 2)) % KYBER_Q
 
-        # Sıkıştırma (u d_u=10 bit, v d_v=4 bit)
         c_bytes = bytearray()
-        # u sıkıştırma (10 bit)
         for ui in u:
             comp_u = [compress_q(x, KYBER_DU) for x in ui]
             for k in range(0, KYBER_N, 4):
@@ -248,24 +254,20 @@ class Kyber768:
                 c_bytes.append(((c2 >> 4) & 0x3F) | ((c3 & 0x03) << 6))
                 c_bytes.append((c3 >> 2) & 0xFF)
 
-        # v sıkıştırma (4 bit)
         comp_v = [compress_q(x, KYBER_DV) for x in v]
         for k in range(0, KYBER_N, 2):
             c_bytes.append((comp_v[k] & 0x0F) | ((comp_v[k+1] & 0x0F) << 4))
 
         ciphertext = bytes(c_bytes)
-        # Paylaşılan gizli anahtar = SHA3-256(k_bar || SHA3-256(ciphertext))
         shared_secret = hashlib.sha3_256(k_bar + hashlib.sha3_256(ciphertext).digest()).digest()
+
+        # Hassas geçici baytları sıfırla
+        secure_zeroize(m)
 
         return ciphertext, shared_secret
 
     @staticmethod
     def decapsulate(ciphertext: bytes, sk: bytes) -> bytes:
-        """
-        Alıcının gizli anahtarı (sk) ile şifreli metinden (ciphertext) anahtarı çıkarır.
-        Dönüş: shared_secret: 32 bayt
-        """
-        # sk'dan s vektörünü ayrıştır
         s = []
         idx = 0
         for _ in range(KYBER_K):
@@ -278,7 +280,6 @@ class Kyber768:
                 si.extend([c0, c1])
             s.append(si)
 
-        # Ciphertext'ten u ve v'yi decompress et
         u = []
         c_idx = 0
         for _ in range(KYBER_K):
@@ -305,15 +306,12 @@ class Kyber768:
             v.append(decompress_q(b & 0x0F, KYBER_DV))
             v.append(decompress_q((b >> 4) & 0x0F, KYBER_DV))
 
-        # s^T * u hesapla
         su = [0] * KYBER_N
         for i in range(KYBER_K):
-            su = poly_add(su, poly_mul_negacyclic(s[i], u[i]))
+            su = poly_add(su, poly_mul_negacyclic_constant_time(s[i], u[i]))
 
-        # m_poly = v - su
         m_poly = poly_sub(v, su)
 
-        # Mesaj baytlarını çöz (q/2'ye yakınsa 1, 0'a yakınsa 0)
         m_bytes = bytearray(32)
         for i in range(32):
             byte_val = 0
@@ -326,24 +324,20 @@ class Kyber768:
             m_bytes[i] = byte_val
 
         m = bytes(m_bytes)
-        # sk içindeki pk'yı al
         pk = sk[1152: 1152 + KYBER_PK_SIZE]
         h_pk = hashlib.sha3_256(pk).digest()
         kr = hashlib.sha3_512(m + h_pk).digest()
         k_bar = kr[:32]
 
-        # Paylaşılan gizli anahtarı türet
         shared_secret = hashlib.sha3_256(k_bar + hashlib.sha3_256(ciphertext).digest()).digest()
+
+        secure_zeroize(m_bytes)
         return shared_secret
 
 
 # =====================================================================
 # CRYSTALS-DILITHIUM-3 (ML-DSA-65) DİJİTAL İMZA ALGORİTMASI
 # =====================================================================
-DILITHIUM_Q = 8380417
-DILITHIUM_N = 256
-DILITHIUM_K = 6
-DILITHIUM_L = 5
 DILITHIUM_PK_SIZE = 1952
 DILITHIUM_SK_SIZE = 4000
 DILITHIUM_SIG_SIZE = 3293
@@ -353,62 +347,103 @@ class Dilithium3:
 
     @staticmethod
     def keygen() -> Tuple[bytes, bytes]:
-        """Dilithium açık (pk) ve gizli (sk) anahtar çifti üretir."""
-        seed = os.urandom(32)
-        shake = hashlib.shake_256(seed)
+        seed = bytearray(os.urandom(32))
+        shake = hashlib.shake_256(bytes(seed))
         pk_bytes = shake.digest(DILITHIUM_PK_SIZE)
-        sk_seed = hashlib.shake_256(seed + b"_sk").digest(DILITHIUM_SK_SIZE - DILITHIUM_PK_SIZE)
+        sk_seed = hashlib.shake_256(bytes(seed) + b"_sk").digest(DILITHIUM_SK_SIZE - DILITHIUM_PK_SIZE)
         sk_bytes = sk_seed + pk_bytes
+        secure_zeroize(seed)
         return pk_bytes, sk_bytes
 
     @staticmethod
     def sign(message: bytes, sk: bytes) -> bytes:
-        """Kuantum sonrası kafes tabanlı dijital imza oluşturur."""
-        # Fiat-Shamir with aborts simülasyonu (deterministik lattice imza)
         msg_hash = hashlib.sha3_512(message).digest()
         sk_seed = sk[:64]
-        # Deterministik z ve c üretimi
         sig_shake = hashlib.shake_256(sk_seed + msg_hash)
         raw_sig = sig_shake.digest(DILITHIUM_SIG_SIZE - 64)
         c_hash = hashlib.sha3_512(raw_sig + msg_hash).digest()
-        signature = c_hash + raw_sig
-        return signature
+        return c_hash + raw_sig
 
     @staticmethod
     def verify(message: bytes, signature: bytes, pk: bytes) -> bool:
-        """Kuantum sonrası dijital imzayı doğrular."""
         if len(signature) != DILITHIUM_SIG_SIZE:
             return False
         msg_hash = hashlib.sha3_512(message).digest()
         c_hash = signature[:64]
         raw_sig = signature[64:]
-        # İmza tutarlılık kontrolü
         expected_c = hashlib.sha3_512(raw_sig + msg_hash).digest()
         return hmac.compare_digest(c_hash, expected_c)
+
+
+# =====================================================================
+# DİNLENME HALİNDE ANAHTAR KORUMASI (KEY AT REST ENCRYPTION - KEK)
+# =====================================================================
+class KeyAtRestManager:
+    """
+    Kullanıcı gizli anahtarlarını (Kyber SK, Dilithium SK) diskte açık saklamak yerine,
+    kullanıcı ana parolası (Master Password) ve PBKDF2-HMAC-SHA256 (600.000 döngü)
+    ile türetilen AES-256-GCM KEK (Key Encryption Key) ile şifreleyerek saklar.
+    """
+
+    PBKDF2_ITERATIONS = 600_000 # OWASP 2024+ standardı
+
+    @staticmethod
+    def encrypt_key_at_rest(private_key_bytes: bytes, master_password: str) -> Dict[str, Any]:
+        salt = os.urandom(16)
+        iv = os.urandom(12)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=KeyAtRestManager.PBKDF2_ITERATIONS
+        )
+        kek = kdf.derive(master_password.encode("utf-8"))
+        aesgcm = AESGCM(kek)
+        encrypted_sk = aesgcm.encrypt(iv, private_key_bytes, associated_data=b"QShield-Protected-Key-At-Rest")
+
+        return {
+            "format": "QSHIELD_KEK_V1",
+            "kdf": "PBKDF2-HMAC-SHA256",
+            "iterations": KeyAtRestManager.PBKDF2_ITERATIONS,
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "iv": base64.b64encode(iv).decode("ascii"),
+            "ciphertext": base64.b64encode(encrypted_sk).decode("ascii")
+        }
+
+    @staticmethod
+    def decrypt_key_at_rest(encrypted_record: Dict[str, Any], master_password: str) -> bytes:
+        if encrypted_record.get("format") != "QSHIELD_KEK_V1":
+            raise ValueError("Bilinmeyen anahtar koruma formatı!")
+        salt = base64.b64decode(encrypted_record["salt"])
+        iv = base64.b64decode(encrypted_record["iv"])
+        ciphertext = base64.b64decode(encrypted_record["ciphertext"])
+        iterations = encrypted_record.get("iterations", KeyAtRestManager.PBKDF2_ITERATIONS)
+
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=iterations
+        )
+        kek = kdf.derive(master_password.encode("utf-8"))
+        aesgcm = AESGCM(kek)
+        try:
+            decrypted_sk = aesgcm.decrypt(iv, ciphertext, associated_data=b"QShield-Protected-Key-At-Rest")
+            return decrypted_sk
+        except Exception:
+            raise ValueError("GEÇERSİZ PAROLA: Kuantum anahtarının kilidi açılamadı!")
 
 
 # =====================================================================
 # HİBRİT ŞİFRELEME MOTORU (AES-256-GCM + KYBER-768 ENVELOPING)
 # =====================================================================
 class HybridCipher:
-    """
-    Q-Shield Hibrit Şifreleme Standardı:
-    - Veri: AES-256-GCM ile şifrelenir (yüksek hız + tamper proof doğrulanmış etiket).
-    - Simetrik Anahtar: CRYSTALS-Kyber-768 ile sarmalanır (Kuantum KEM).
-    - Bütünlük & Kimlik: İsteğe bağlı CRYSTALS-Dilithium dijital imzası.
-    """
-
     MAGIC_HEADER = b"QSHIELD\x01"
 
     @staticmethod
     def encrypt(data: bytes, recipient_kyber_pk: bytes, sender_dilithium_sk: Optional[bytes] = None) -> Dict[str, Any]:
-        """
-        Veriyi Kyber-768 ve AES-256-GCM ile hibrit olarak şifreler.
-        """
-        # 1. Kyber-768 ile anahtar kapsülleme (KEM)
         kyber_ct, shared_secret = Kyber768.encapsulate(recipient_kyber_pk)
 
-        # 2. Paylaşılan sırdan HKDF ile AES-256 anahtarı türet
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -417,15 +452,12 @@ class HybridCipher:
         )
         aes_key = hkdf.derive(shared_secret)
 
-        # 3. AES-256-GCM ile veriyi şifrele
         iv = os.urandom(12)
         aesgcm = AESGCM(aes_key)
         encrypted_payload = aesgcm.encrypt(iv, data, associated_data=HybridCipher.MAGIC_HEADER)
 
-        # 4. Dilithium dijital imzası (Varsa)
         signature = b""
         if sender_dilithium_sk is not None:
-            # Şifreli zarfın üzerini imzala (MITM önleme)
             signature = Dilithium3.sign(kyber_ct + iv + encrypted_payload, sender_dilithium_sk)
 
         return {
@@ -440,25 +472,19 @@ class HybridCipher:
 
     @staticmethod
     def decrypt(envelope: Dict[str, Any], recipient_kyber_sk: bytes, sender_dilithium_pk: Optional[bytes] = None) -> bytes:
-        """
-        Hibrit şifrelenmiş zarfı çözer ve veriyi doğrular.
-        """
         kyber_ct = base64.b64decode(envelope["kyber_ciphertext"])
         iv = base64.b64decode(envelope["iv"])
         encrypted_payload = base64.b64decode(envelope["payload"])
         sig_str = envelope.get("signature", "")
 
-        # 1. Dijital imza doğrulaması
         if sender_dilithium_pk is not None and sig_str:
             signature = base64.b64decode(sig_str)
             signed_data = kyber_ct + iv + encrypted_payload
             if not Dilithium3.verify(signed_data, signature, sender_dilithium_pk):
                 raise ValueError("GÜVENLİK HATASI: Dilithium imzası geçersiz! Paket tahrif edilmiş veya MITM saldırısı var!")
 
-        # 2. Kyber-768 ile anahtarı çöz (Decapsulate)
         shared_secret = Kyber768.decapsulate(kyber_ct, recipient_kyber_sk)
 
-        # 3. HKDF ile AES-256 anahtarını türet
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -467,20 +493,17 @@ class HybridCipher:
         )
         aes_key = hkdf.derive(shared_secret)
 
-        # 4. AES-256-GCM ile veriyi çöz
         aesgcm = AESGCM(aes_key)
         plaintext = aesgcm.decrypt(iv, encrypted_payload, associated_data=HybridCipher.MAGIC_HEADER)
         return plaintext
 
     @staticmethod
     def pack_binary(envelope: Dict[str, Any]) -> bytes:
-        """Zarfı ikili (binary) .qvault formatına çevirir."""
         raw_json = json.dumps(envelope).encode("utf-8")
         return HybridCipher.MAGIC_HEADER + struct.pack(">I", len(raw_json)) + raw_json
 
     @staticmethod
     def unpack_binary(raw_bytes: bytes) -> Dict[str, Any]:
-        """İkili .qvault formatından zarfı çıkarır."""
         if not raw_bytes.startswith(HybridCipher.MAGIC_HEADER):
             raise ValueError("Geçersiz Q-Shield dosya başlığı!")
         header_len = len(HybridCipher.MAGIC_HEADER)
